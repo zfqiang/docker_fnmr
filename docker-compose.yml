@@ -1,0 +1,84 @@
+version: "3.8"
+
+services:
+  # Nginx 服务
+  nginx:
+    image: nginx:1.28-alpine # 使用 Nginx 1.28 版本
+    container_name: fa_nginx # 容器名称
+    ports:
+      - "8080:80" # 将容器的 80 端口映射到主机的 8080 端口
+    volumes:
+      - ./app:/var/www/html # 挂载代码
+      - ./nginx/conf.id:/etc/nginx/nginx.conf # 挂载站点配置
+      - ./logs/nginx:/var/log/nginx # 挂载日志
+    depends_on:
+      php:
+        condition: service_started # 等待 php 服务启动后再启动 nginx 服务
+    networks:
+      - fa_network # 加入自定义网络
+    restart: unless-stopped # 容器退出时自动重启，除非手动停止
+
+  # PHP-FPM 服务
+  php:
+    build:
+      context: . # 指定 Dockerfile 所在的上下文路径
+      dockerfile: Dockerfile # 指定 Dockerfile 的名称
+    container_name: fa_php # 容器名称
+    volumes:
+      - ./app:/var/www/html # 挂载代码
+      - ./logs/php:/var/log/php # 挂载日志
+    environment:
+      - TZ=Asia/Shanghai # 设置时区
+    depends_on:
+      mysql:
+        condition: service_healthy # 等待 mysql 服务健康后再启动 php 服务
+      redis:
+        condition: service_healthy # 等待 redis 服务健康后再启动 php 服务
+    networks:
+      - fa_network # 加入自定义网络
+    restart: unless-stopped # 容器退出时自动重启，除非手动停止
+
+  # MySQL 数据库
+  mysql:
+    image: mysql:5.7 # 使用 MySQL 5.7 版本
+    container_name: fa_mysql # 容器名称
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-root_password}
+      MYSQL_DATABASE: ${DB_NAME:-fastadmin}
+      MYSQL_USER: ${DB_USER:-fa_user}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-fa_password}
+      TZ: Asia/Shanghai
+    ports:
+      - "3306:3306" # 将容器的 3306 端口映射到主机的 3306 端口
+    volumes:
+      - ./data/mysql:/var/lib/mysql # 挂载数据
+      - ./mysql/init:/docker-entrypoint-initdb.d # 挂载初始化脚本
+      - ./logs/mysql:/var/log/mysql # 挂载日志
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"] # 健康检查命令
+      interval: 10s # 检查间隔
+      timeout: 5s # 超时时间
+      retries: 5 # 重试次数
+    networks:
+      - fa_network # 加入自定义网络
+    restart: unless-stopped # 容器退出时自动重启，除非手动停止
+
+  # Redis 缓存
+  redis:
+    image: redis:7-alpine # 使用 Redis 7.0 版本
+    container_name: fa_redis # 容器名称
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_password} # 设置 Redis 密码
+    ports:
+      - "6379:6379" # 将容器的 6379 端口映射到主机的 6379 端口
+    volumes:
+      - ./data/redis:/data # 挂载数据
+      - ./logs/redis:/var/log/redis # 挂载日志
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-redis_password} # 启动命令
+    networks:
+      - fa_network # 加入自定义网络
+    restart: unless-stopped # 容器退出时自动重启，除非手动停止
+
+networks:
+  fa_network: # 自定义网络
+    driver: bridge # 使用桥接网络
